@@ -1,95 +1,78 @@
-import numpy
-import glob
 from annoy import AnnoyIndex
-from scipy import spatial
-import json
+import glob
+from os.path import join
+import numpy
 import os
+import json
 
-## メタデータのロード ##
+# 初期設定
 
-files = glob.glob("/Users/nakamura/git/d_toyo/toyo_iiif/src/aws/data/list.json")
-map = {}
-for file in files:
-    print(file)
-    with open(file) as f:
-        df = json.load(f)
-    for obj in df:
-        id = obj["_id"].split("/")[-1].split("#")[0]
-        map[id] = obj
-
-##　Indexの読み込み　##
-
-file_index_map = {}
-with open("file_index_map.json") as f:
-    file_index_map = json.load(f)
-
-########
-
-# config
+# 次元
 dims = 2048
 
-t = AnnoyIndex(dims)
-t.load('test.ann') # モデルを読み込むことも可能です。
-
-########
-
+# 検索対象数
 n_nearest_neighbors = 200
+n_nearest_neighbors = n_nearest_neighbors + 1
 
-image_vectors_path = "output/image_vectors"
-files = glob.glob(image_vectors_path+"/*.npy")
+t = AnnoyIndex(dims, metric='angular')
+t.load('index.ann')
 
-for file_index in range(len(files)):
+# インデックスマップの読み込み（Annoyのインデックス内のIDと特徴ベクトルの対応）
 
-    file = files[file_index]
+map_path = "file_index_map.json"
+file_index_map = {}
+max = 0
+with open(map_path) as f:
+    data = json.load(f)
+    index_id_map = {}
+    id_index_map = {}
+    for index in data:
+        index_id_map[int(index)] = data[index]
+        id_index_map[data[index]] = int(index)
+        max += 1
 
-    id = file.split("/")[-1].split(".")[0]
+# 予測
 
-    opath = '../data/'+id+'.json'
+count = 0
+for id in sorted(id_index_map):
 
+    count += 1
+    print(str(count)+"/" + str(max) + "\t" + id)
+
+    opath = "/Users/nakamura/git/json/toyo/similar_images/"+id+".json"
     if os.path.exists(opath):
         continue
 
-    print(str(file_index)+"/"+str(len(files)))
+    query_index = id_index_map[id]
+    nearest_neighbors = t.get_nns_by_item(query_index, n_nearest_neighbors, include_distances=False) #True)
 
-    master_vector = numpy.load(file)
+    indexes = nearest_neighbors #[0]
 
-    nearest_neighbors = t.get_nns_by_vector(master_vector, n_nearest_neighbors)
-    
+    # scores = nearest_neighbors[1]
 
-    arr = []
+    similar_images = []
 
-    for j in nearest_neighbors:
+    for i in range(1, len(indexes)):
 
-        neighbor_file_name = file_index_map[str(j)]
+        target_index = indexes[i]
 
+        target_id = index_id_map[target_index]
         '''
 
-        neighbor_file_vector = numpy.load(XXX)
+        similarity = scores[i]
 
-        similarity = 1 - \
-            spatial.distance.cosine(master_vector, neighbor_file_vector)
         rounded_similarity = int((similarity * 10000)) / 10000.0
 
-        arr.append(obj)
-        '''
-
-        id2 = neighbor_file_name.split(".")[0]
-        if id2 not in map:
-            # print("- "+id2)
-            continue
         
-        obj2 = map[id2]
+        data.append({
+            "id" : target_id,
+            "score" : rounded_similarity
+        })
+        '''
+        similar_images.append(target_id)
 
-        obj = {
-            "id" : id2,
-            # "score": rounded_similarity,
-            "thumbnail": obj2["image"],
-            "title": obj2["label"],
-            # "sourceInfo": obj2["sourceInfo"],
-            "accessInfo": obj2["accessInfo"]
-        }
+    fw = open(opath, 'w')
+    json.dump(similar_images, fw, ensure_ascii=False, indent=4,
+        sort_keys=True, separators=(',', ': '))
 
-        arr.append(obj)
-
-    f2 = open(opath, 'w')
-    json.dump(arr, f2)
+        
